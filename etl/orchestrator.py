@@ -71,15 +71,16 @@ def run(frequency='daily', branch_id=None, table_name=None, force_full=False):
     log.info(f"Batch start — branches={len(branches)}  tables={len(tables)}  "
              f"frequency={frequency}  force_full={force_full}")
 
-    pg_conn = loader.get_conn()
-
     for branch in branches:
         log.info(f"Branch [{branch['id']}] {branch['name']} ({branch['mssql_db']})")
-        for cfg in tables:
-            try:
-                _sync_one(branch, cfg, pg_conn, force_full)
-            except Exception:
-                continue  # error already logged; keep going
+        pg_conn = loader.get_conn()
+        try:
+            for cfg in tables:
+                try:
+                    _sync_one(branch, cfg, pg_conn, force_full)
+                except Exception:
+                    continue  # error already logged; keep going
+        finally:
+            pg_conn.close()
 
-    pg_conn.close()
     log.info("Batch complete.")
