@@ -14,13 +14,13 @@ PG_DSN = os.getenv("PG_DSN")
 if not PG_DSN:
     raise ValueError("PG_DSN environment variable is required")
 
-# Anthropic API
-ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
-if not ANTHROPIC_API_KEY:
-    print("Warning: ANTHROPIC_API_KEY not set (required for chat functionality)")
+# DeepSeek API (OpenAI-compatible)
+DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+DEEPSEEK_BASE_URL = os.getenv("DEEPSEEK_BASE_URL", "https://api.deepseek.com")
+DEEPSEEK_MODEL = os.getenv("DEEPSEEK_MODEL", "deepseek-chat")
 
-# Claude model selection
-CLAUDE_MODEL = os.getenv("CLAUDE_MODEL", "claude-haiku-4-5")
+if not DEEPSEEK_API_KEY:
+    print("Warning: DEEPSEEK_API_KEY not set (required for chat functionality)")
 
 # LINE configuration
 LINE_CHANNEL_ACCESS_TOKEN = os.getenv("LINE_CHANNEL_ACCESS_TOKEN")
