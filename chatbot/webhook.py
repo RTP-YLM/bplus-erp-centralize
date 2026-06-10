@@ -85,6 +85,34 @@ async def get_templates():
         return {"error": str(e), "type": type(e).__name__}
 
 
+@app.get("/schema/{table_name}")
+async def get_schema(table_name: str):
+    """Get column info for a specific table (for debugging)."""
+    try:
+        import psycopg2.extras
+        from .db_client import _get_pool
+        
+        p = _get_pool()
+        conn = p.getconn()
+        cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+        try:
+            cur.execute("""
+                SELECT column_name, data_type, is_nullable
+                FROM information_schema.columns
+                WHERE table_name = %s AND table_schema = 'public'
+                ORDER BY ordinal_position
+            """, (table_name,))
+            cols = [dict(r) for r in cur.fetchall()]
+            if not cols:
+                return {"error": f"Table '{table_name}' not found"}
+            return {"table": table_name, "columns": cols, "count": len(cols)}
+        finally:
+            cur.close()
+            p.putconn(conn)
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.post("/webhook")
 async def webhook(
     request: Request,
