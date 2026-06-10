@@ -62,9 +62,13 @@ CORE_SCHEMA = """
 | trd_sku | FK→skumaster.sku_key | รหัสสินค้า |
 | trd_qty | numeric | จำนวน |
 | trd_n_amt | numeric | ยอดสุทธิ (บาท) |
-| trd_price | numeric | ราคาต่อหน่วย |
-| trd_cost | numeric | ต้นทุน |
+| trd_u_prc | numeric | ราคาต่อหน่วย |
+| trd_n_sell | numeric | ยอดขายสุทธิ |
+| trd_g_amt | numeric | ยอดรวมก่อนหัก |
+| trd_b_amt | numeric | ยอดฐาน |
 | branch_id | FK | สาขา |
+
+⚠️ **ไม่มี column `trd_cost` ใน TRANSTKD** — ไม่สามารถคำนวณต้นทุนหรือมาร์จิ้นจากตารางนี้ได้โดยตรง
 
 ### skumaster — ข้อมูลสินค้า (SKU master, 44K+ rows)
 | Column | Type | คำอธิบาย |
@@ -192,7 +196,8 @@ COLUMN_GLOSSARY = """
 |--------|----------|
 | di_date, di_ref, di_key | วันที่, เลขที่, รหัสเอกสาร |
 | trd_qty, trd_n_amt | จำนวน, ยอดเงินสุทธิ |
-| trd_cost, trd_price | ต้นทุน, ราคาขาย |
+| trd_g_amt, trd_n_sell | ยอดรวมก่อนหัก, ยอดขายสุทธิ |
+| trd_u_prc | ราคาต่อหน่วย |
 | skb_qty | จำนวนคงเหลือในสต็อก |
 | skm_qty | จำนวน +/− (บวก=เข้า, ลบ=ออก) |
 | ard_n_amt, apd_n_amt | ยอดค้าง AR/AP |
@@ -206,16 +211,19 @@ BUSINESS_RULES = """
 
 | เมตริก | วิธีคำนวณ |
 |--------|----------|
-| ยอดขาย | SUM(trd_n_amt) FROM transtkd JOIN docinfo WHERE doctype = 'IV' |
-| ต้นทุนขาย | SUM(trd_cost) FROM transtkd |
-| กำไรขั้นต้น | SUM(trd_n_amt - trd_cost) |
-| มาร์จิ้น (%) | SUM(trd_n_amt - trd_cost) / SUM(trd_n_amt) * 100 |
+| ยอดขาย | SUM(trd_n_amt) FROM transtkd JOIN docinfo WHERE dt_doccode = 'IV' |
+| ยอดขายรวม | SUM(trd_g_amt) — ก่อนหักส่วนลด |
+| ยอดขายสุทธิ | SUM(trd_n_sell) — หลังหักส่วนลด |
+| ราคาเฉลี่ยต่อหน่วย | SUM(trd_n_amt) / NULLIF(SUM(trd_qty), 0) |
+| จำนวนสินค้าที่ขาย | SUM(trd_qty) |
 | สต็อกคงเหลือ | skb_qty FROM skubalance |
 | ลูกหนี้ค้าง | SUM(ard_n_amt) FROM ardetail WHERE ard_n_amt > 0 |
 | เจ้าหนี้ค้าง | SUM(apd_n_amt) FROM apdetail WHERE apd_n_amt > 0 |
+| ส่วนลดรวม | SUM(trd_g_amt - trd_n_amt) |
 | จำนวนลูกค้าที่ซื้อ | COUNT(DISTINCT tph_ar) FROM tranpayh |
-| สินค้าขายดี | SUM(trd_qty) GROUP BY sku ORDER BY SUM DESC |
 | Aging ลูกหนี้ | di_date ใน docinfo เทียบกับ CURRENT_DATE |
+
+⚠️ **ไม่มีข้อมูลต้นทุน (cost) ในระบบ** — ไม่สามารถคำนวณกำไร/มาร์จิ้นได้ คำถามเกี่ยวกับกำไรต้องตอบตามตรงว่าไม่มีข้อมูล
 """
 
 
@@ -241,9 +249,10 @@ STATIC_SYSTEM_PROMPT = """คุณคือผู้ช่วยสืบค้
 | เอกสาร | "เอกสารวันนี้" "ขายแยกตามประเภท" | query_documents_today, query_sales_by_doctype |
 | ธนาคาร | "statement ธนาคาร" | query_bank_statement |
 
-### 2. Custom SQL (query_custom) — ใช้เมื่อถามเกี่ยวกับ กำไร/ต้นทุน/มาร์จิ้น หรือเปรียบเทียบข้ามช่วง
-⚠️ **กฎใหม่: ถ้าผู้ใช้ถามเกี่ยวกับกำไร ต้นทุน มาร์จิ้น กำไรขั้นต้น margin → ห้ามใช้ template → ต้องใช้ query_custom!**
+### 2. Custom SQL (query_custom) — ใช้เมื่อถามนอกเหนือจาก template พื้นฐาน
 สร้าง SQL เองได้! **SELECT เท่านั้น** — ใช้ได้กับทุกตารางใน schema ข้างบน
+
+⚠️ **ไม่มีข้อมูลต้นทุนในระบบ** — ถ้าผู้ใช้ถามเกี่ยวกับกำไร/มาร์จิ้น/ต้นทุน → ตอบว่า "ขออภัยครับ ระบบไม่มีข้อมูลต้นทุน (cost) จึงไม่สามารถคำนวณกำไรหรือมาร์จิ้นได้ — ดูได้เฉพาะยอดขายครับ"
 
 📌 **กฎการเขียน SQL:**
 - ใช้ **double quotes** ล้อม alias ภาษาไทย: `SELECT sku_name AS "สินค้า"`
@@ -257,8 +266,9 @@ STATIC_SYSTEM_PROMPT = """คุณคือผู้ช่วยสืบค้
 ตัวอย่าง query_custom:
 ```sql
 SELECT s.sku_name AS "สินค้า", br.brn_name AS "ยี่ห้อ",
-       SUM(t.trd_n_amt - t.trd_cost) AS "กำไรขั้นต้น",
-       ROUND(SUM(t.trd_n_amt - t.trd_cost) / NULLIF(SUM(t.trd_n_amt),0) * 100, 1) AS "มาร์จิ้น%"
+       SUM(t.trd_qty) AS "จำนวนขาย",
+       SUM(t.trd_n_amt) AS "ยอดขายสุทธิ",
+       ROUND(SUM(t.trd_n_amt) / NULLIF(SUM(t.trd_qty),0), 2) AS "ราคาเฉลี่ย"
 FROM transtkd t
 JOIN transtkh h ON h.trh_key = t.trd_trh AND h.branch_id = t.branch_id
 JOIN docinfo d ON d.di_key = h.trh_di AND d.branch_id = h.branch_id
@@ -267,7 +277,7 @@ LEFT JOIN brand br ON br.brn_key = s.sku_brn AND br.branch_id = s.branch_id
 WHERE d.di_date BETWEEN :date_from AND :date_to
   AND (:branch_id IS NULL OR d.branch_id = :branch_id)
 GROUP BY s.sku_name, br.brn_name
-ORDER BY "กำไรขั้นต้น" DESC
+ORDER BY "ยอดขายสุทธิ" DESC
 LIMIT 20
 ```
 
@@ -280,16 +290,13 @@ LIMIT 20
 "สินค้าNGKขายดีไหม" → query_sales_by_sku (sku="NGK", date_from, date_to)
 "ลูกหนี้ค้างชำระ" → query_ar_outstanding (branch_id=null, limit_rows=50)
 
-⚠️ **ถ้ามีคำว่า "กำไร" "margin" "ต้นทุน" "cost" → ต้อง query_custom:**
-"สินค้าตัวไหนมาร์จิ้นดีสุดเดือนนี้" → query_custom (SELECT sku_name, SUM(amt-cost) margin ...)
-"กำไรขั้นต้นเดือนนี้ทุกสาขา" → query_custom (SUM(trd_n_amt - trd_cost) ...)
-"สินค้าขายดีแต่กำไรน้อย" → query_custom (JOIN + cost + margin calc)
-"ต้นทุนขายรวมเดือนที่แล้ว" → query_custom (SUM(trd_cost) ...)
-
-⚠️ **ถ้าเปรียบเทียบข้ามช่วงเวลา → query_custom:**
+⚠️ **ถ้าเปรียบเทียบข้ามช่วงเวลา หรือ query ซับซ้อน → query_custom:**
 "ยอดขายเดือนนี้เทียบเดือนที่แล้ว" → query_custom (2 subqueries or UNION)
 "ร้านไหนค้างเกิน 90 วัน" → query_custom (aging query, as_of_date)
 "สาขาไหนขายยี่ห้อ NGK เยอะสุด" → query_custom (JOIN brand + GROUP BY branch)
+"สินค้าราคาเฉลี่ยต่อหน่วยสูงสุด" → query_custom (SUM(amt)/SUM(qty))
+
+⚠️ **กำไร/มาร์จิ้น/ต้นทุน** → ไม่มีข้อมูล → ตอบ: "ขออภัยครับ ระบบไม่มีข้อมูลต้นทุน"
 
 ## 🗣️ คำศัพท์ที่ใช้
 
@@ -300,7 +307,7 @@ LIMIT 20
 | "ขาย" "ซื้อ" "ซื้อของ" "ออกบิล" | ขาย (DOCINFO + TRANSTKD) |
 | "จ่าย" "ชำระ" "จ่ายเงิน" "จ่ายหนี้" | ชำระเงิน (TRANPAY*) |
 | "ของค้าง" "สต็อกค้าง" "ของเหลือ" | สต็อกคงเหลือ (SKUBALANCE) |
-| "กำไร" "มาร์จิ้น" "margin" | กำไร (trd_n_amt - trd_cost) |
+| "กำไร" "มาร์จิ้น" "margin" "ต้นทุน" | ⚠️ ไม่มีข้อมูล — ตอบว่าไม่มีข้อมูลต้นทุน |
 | "ค้างนาน" "เกินกำหนด" "aging" | วันที่เอกสารเทียบกับวันนี้ |
 
 ## 📐 กฎการแปลค่า
