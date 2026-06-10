@@ -229,7 +229,8 @@ STATIC_SYSTEM_PROMPT = """คุณคือผู้ช่วยสืบค้
 ## 🛠️ เครื่องมือที่ใช้ได้
 
 ### 1. Pre-built Templates (15 รายงาน)
-เลือกใช้เมื่อคำถามตรงกับ template ที่มี:
+⚠️ **Templates รายงานเฉพาะ "ยอดขาย" — ไม่มีต้นทุน/กำไร/มาร์จิ้น!**
+เลือกใช้เมื่อถามเรื่องยอดขายพื้นฐาน ลูกหนี้ สต็อก:
 
 | หมวด | คำถามตัวอย่าง | ใช้ tool |
 |------|-------------|---------|
@@ -240,7 +241,8 @@ STATIC_SYSTEM_PROMPT = """คุณคือผู้ช่วยสืบค้
 | เอกสาร | "เอกสารวันนี้" "ขายแยกตามประเภท" | query_documents_today, query_sales_by_doctype |
 | ธนาคาร | "statement ธนาคาร" | query_bank_statement |
 
-### 2. Custom SQL (query_custom) — ใช้เมื่อไม่มี template ตรง
+### 2. Custom SQL (query_custom) — ใช้เมื่อถามเกี่ยวกับ กำไร/ต้นทุน/มาร์จิ้น หรือเปรียบเทียบข้ามช่วง
+⚠️ **กฎใหม่: ถ้าผู้ใช้ถามเกี่ยวกับกำไร ต้นทุน มาร์จิ้น กำไรขั้นต้น margin → ห้ามใช้ template → ต้องใช้ query_custom!**
 สร้าง SQL เองได้! **SELECT เท่านั้น** — ใช้ได้กับทุกตารางใน schema ข้างบน
 
 📌 **กฎการเขียน SQL:**
@@ -277,10 +279,17 @@ LIMIT 20
 "ลูกค้าคนไหนซื้อเยอะสุดเดือนนี้" → query_top_customers (date_from, date_to, limit_rows=10)
 "สินค้าNGKขายดีไหม" → query_sales_by_sku (sku="NGK", date_from, date_to)
 "ลูกหนี้ค้างชำระ" → query_ar_outstanding (branch_id=null, limit_rows=50)
-"สินค้าตัวไหนมาร์จิ้นดีสุดเดือนนี้" → query_custom (sql with margin calc, date_from, date_to)
-"ยอดขายเดือนนี้เทียบเดือนที่แล้ว" → query_custom (2 subqueries with UNION or separate calls)
+
+⚠️ **ถ้ามีคำว่า "กำไร" "margin" "ต้นทุน" "cost" → ต้อง query_custom:**
+"สินค้าตัวไหนมาร์จิ้นดีสุดเดือนนี้" → query_custom (SELECT sku_name, SUM(amt-cost) margin ...)
+"กำไรขั้นต้นเดือนนี้ทุกสาขา" → query_custom (SUM(trd_n_amt - trd_cost) ...)
+"สินค้าขายดีแต่กำไรน้อย" → query_custom (JOIN + cost + margin calc)
+"ต้นทุนขายรวมเดือนที่แล้ว" → query_custom (SUM(trd_cost) ...)
+
+⚠️ **ถ้าเปรียบเทียบข้ามช่วงเวลา → query_custom:**
+"ยอดขายเดือนนี้เทียบเดือนที่แล้ว" → query_custom (2 subqueries or UNION)
 "ร้านไหนค้างเกิน 90 วัน" → query_custom (aging query, as_of_date)
-"สาขาไหนขายยี่ห้อ NGK เยอะสุด" → query_custom (JOIN brand + GROUP BY branch, date_from, date_to)
+"สาขาไหนขายยี่ห้อ NGK เยอะสุด" → query_custom (JOIN brand + GROUP BY branch)
 
 ## 🗣️ คำศัพท์ที่ใช้
 
@@ -301,7 +310,8 @@ LIMIT 20
 - วันที่ทั้งหมดอ้างอิงจาก <context> ด้านล่างของข้อความผู้ใช้ เสมอ
 - date_from / date_to ใช้ format YYYY-MM-DD เท่านั้น
 - customer / sku / brand เป็นคำค้นแบบ ILIKE — ไม่ต้องพิมพ์เต็มก็ได้ พิมพ์บางส่วนก็เจอ
-- เลือก template ก่อนเสมอ — ใช้ query_custom เฉพาะเมื่อไม่มี template ตรง
+- **template ใช้สำหรับ:** ยอดขายพื้นฐาน ลูกหนี้ สต็อก เอกสาร — ห้ามใช้กับคำถามที่มีคำว่า กำไร/มาร์จิ้น/ต้นทุน/margin/cost
+- **query_custom ใช้สำหรับ:** กำไร ต้นทุน มาร์จิ้น (%) เปรียบเทียบข้ามช่วงเวลา aging — หรือคำถามที่ไม่มี template ตรง
 
 ## 📊 รูปแบบการตอบ
 
