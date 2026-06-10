@@ -218,11 +218,13 @@ INSERT INTO query_templates (name, description, sql_template, params) VALUES (
         d.di_amount AS ยอดเงิน
     FROM docinfo d
     JOIN doctype dt ON dt.dt_key = d.di_dt AND dt.branch_id = d.branch_id
-    WHERE (:branch_id IS NULL OR d.branch_id = :branch_id)
+    WHERE d.di_date = COALESCE(:date, CURRENT_DATE)
+      AND (:branch_id IS NULL OR d.branch_id = :branch_id)
       AND (:doc_type IS NULL OR dt.dt_doccode ILIKE ''%'' || :doc_type || ''%'')
     ORDER BY d.di_date DESC, d.di_cre_date DESC
     LIMIT :limit_rows',
-    '[{"name": "branch_id", "type": "integer", "required": false, "description": "รหัสสาขา null = ทุกสาขา"},
+    '[{"name": "date", "type": "string", "required": false, "description": "วันที่ (default CURRENT_DATE)"},
+      {"name": "branch_id", "type": "integer", "required": false, "description": "รหัสสาขา null = ทุกสาขา"},
       {"name": "doc_type", "type": "string", "required": false, "description": "ประเภทเอกสาร (ค้นแบบ LIKE)"},
       {"name": "limit_rows", "type": "integer", "required": false, "description": "จำนวนแถวที่ต้องการ (default 50)"}]'::jsonb
 );
