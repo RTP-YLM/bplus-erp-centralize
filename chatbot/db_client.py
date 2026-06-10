@@ -62,6 +62,8 @@ def _build_replacer(params: Dict[str, Any]):
     Build a regex + callback pair that replaces :param → %s in order,
     with longest param names matched first (prevents :date eating :date_from).
 
+    If a :param appears in SQL but not in params dict, it's replaced with NULL.
+
     params: {'customer': 'เม้ง', 'date_from': '2026-01-01', ...}
     """
     # Sort param names longest-first so :date_from is matched before :date
@@ -69,6 +71,7 @@ def _build_replacer(params: Dict[str, Any]):
     pattern = re.compile(r':(' + '|'.join(map(re.escape, sorted_names)) + r')\b')
 
     values = []
+    missing_params = set()
 
     def _repl(m):
         name = m.group(1)
@@ -83,7 +86,29 @@ def _build_replacer(params: Dict[str, Any]):
             values.append(str(val))
         return "%s"
 
-    return pattern, _repl, values
+    def _clean(sql: str) -> str:
+        """Replace known params, then catch any remaining :params → NULL."""
+        result = sql
+        if sorted_names:
+            result = pattern.sub(_repl, result)
+        # Second pass: catch any :params that weren't in the dict
+        remaining = set(re.findall(r':(\w+)\b', result))
+        if remaining:
+            missing_params.update(remaining)
+            for name in sorted(remaining, key=len, reverse=True):
+                p = re.compile(r':' + re.escape(name) + r'\b')
+                count = [0]
+                def _repl2(m):
+                    count[0] += 1
+                    values.append(None)
+                    return '%s'
+                result = p.sub(_repl2, result)
+        if missing_params:
+            print(f"[WARN] Unknown params in SQL → replaced with NULL: {missing_params}")
+        return result
+
+    # Store _clean for use by execute_raw_sql
+    return _clean, values
 
 
 def execute_sql_template(
@@ -119,9 +144,9 @@ def execute_raw_sql(
     Returns:
         List of result rows as dicts
     """
-    pattern, replacer, values = _build_replacer(params)
+    _clean, values = _build_replacer(params)
 
-    sql_clean = pattern.sub(replacer, sql)
+    sql_clean = _clean(sql)
 
     # Clean up PostgreSQL escaped quotes: ''%'' → '%' for ILIKE patterns.
     # Templates store ''%'' || :customer || ''%'' because '' is PostgreSQL's
