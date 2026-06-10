@@ -109,8 +109,14 @@ def execute_sql_template(
     # Clean up PostgreSQL escaped quotes: ''%'' → '%' for ILIKE patterns.
     # Templates store ''%'' || :customer || ''%'' because '' is PostgreSQL's
     # literal single-quote escape. We resolve it here instead of changing 15 templates.
+    # NOTE: Do NOT blindly replace '' → ' — that corrupts legitimate empty
+    # strings like COALESCE(:x, '').
     sql_clean = sql_clean.replace("''%''", "'%'")
-    sql_clean = sql_clean.replace("''", "'")
+
+    # Escape literal % signs for psycopg2 (ILIKE '%' → ILIKE '%%').
+    # psycopg2 treats % as a format placeholder; %% is the literal percent.
+    # Use negative lookahead: replace % only when NOT followed by s (preserve %s).
+    sql_clean = re.sub(r'%(?!s)', '%%', sql_clean)
 
     p = _get_pool()
     conn = p.getconn()
