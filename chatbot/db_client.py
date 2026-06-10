@@ -1,42 +1,34 @@
 """
 Database Client (Railway PostgreSQL)
-Uses direct psycopg2 connection — no Supabase dependency.
+Uses psycopg2 ThreadedConnectionPool — thread-safe for FastAPI/uvicorn.
 """
+import os
+import re
 import psycopg2
 import psycopg2.extras
+from psycopg2 import pool
 from typing import Dict, List, Any, Optional
-import os
 from dotenv import load_dotenv
 
-_conn: Optional[psycopg2.extensions.connection] = None
+_pool: Optional[pool.ThreadedConnectionPool] = None
 
 
-def get_connection() -> psycopg2.extensions.connection:
-    """Get or create a psycopg2 connection from PG_DSN."""
-    global _conn
-
-    if _conn is not None and not _conn.closed:
-        try:
-            cur = _conn.cursor()
-            cur.execute("SELECT 1")
-            cur.close()
-            return _conn
-        except Exception:
-            _conn = None
-
-    load_dotenv()
-    pg_dsn = os.getenv("PG_DSN")
-    if not pg_dsn:
-        raise ValueError("PG_DSN environment variable is required")
-
-    _conn = psycopg2.connect(pg_dsn)
-    _conn.autocommit = True
-    return _conn
+def _get_pool() -> pool.ThreadedConnectionPool:
+    """Lazy-init ThreadedConnectionPool (thread-safe)."""
+    global _pool
+    if _pool is None:
+        load_dotenv()
+        pg_dsn = os.getenv("PG_DSN")
+        if not pg_dsn:
+            raise ValueError("PG_DSN environment variable is required")
+        _pool = pool.ThreadedConnectionPool(1, 5, pg_dsn)
+    return _pool
 
 
 def query_templates() -> List[Dict[str, Any]]:
     """Fetch all query templates from database."""
-    conn = get_connection()
+    p = _get_pool()
+    conn = p.getconn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
         cur.execute(
@@ -46,11 +38,13 @@ def query_templates() -> List[Dict[str, Any]]:
         return [dict(r) for r in cur.fetchall()]
     finally:
         cur.close()
+        p.putconn(conn)
 
 
 def get_branches() -> List[Dict[str, Any]]:
     """Fetch enabled branches."""
-    conn = get_connection()
+    p = _get_pool()
+    conn = p.getconn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
         cur.execute(
@@ -60,6 +54,36 @@ def get_branches() -> List[Dict[str, Any]]:
         return [dict(r) for r in cur.fetchall()]
     finally:
         cur.close()
+        p.putconn(conn)
+
+
+def _build_replacer(params: Dict[str, Any]):
+    """
+    Build a regex + callback pair that replaces :param → %s in order,
+    with longest param names matched first (prevents :date eating :date_from).
+
+    params: {'customer': 'เม้ง', 'date_from': '2026-01-01', ...}
+    """
+    # Sort param names longest-first so :date_from is matched before :date
+    sorted_names = sorted(params.keys(), key=len, reverse=True)
+    pattern = re.compile(r':(' + '|'.join(map(re.escape, sorted_names)) + r')\b')
+
+    values = []
+
+    def _repl(m):
+        name = m.group(1)
+        val = params.get(name)
+        if val is None or val == "null":
+            values.append(None)
+        elif name == "limit_rows":
+            values.append(int(val))
+        elif name == "branch_id":
+            values.append(int(val) if val else None)
+        else:
+            values.append(str(val))
+        return "%s"
+
+    return pattern, _repl, values
 
 
 def execute_sql_template(
@@ -68,7 +92,7 @@ def execute_sql_template(
     params: Dict[str, Any]
 ) -> List[Dict[str, Any]]:
     """
-    Execute a SQL template with :param → $N parameterized substitution.
+    Execute a SQL template with :param → %s parameterized substitution.
 
     Args:
         template_name: Template name (for logging)
@@ -78,42 +102,27 @@ def execute_sql_template(
     Returns:
         List of result rows as dicts
     """
-    conn = get_connection()
+    pattern, replacer, values = _build_replacer(params)
+
+    sql_clean = pattern.sub(replacer, sql_template)
+
+    # Clean up PostgreSQL escaped quotes: ''%'' → '%' for ILIKE patterns.
+    # Templates store ''%'' || :customer || ''%'' because '' is PostgreSQL's
+    # literal single-quote escape. We resolve it here instead of changing 15 templates.
+    sql_clean = sql_clean.replace("''%''", "'%'")
+    sql_clean = sql_clean.replace("''", "'")
+
+    p = _get_pool()
+    conn = p.getconn()
     cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
     try:
-        # Convert :param → %s (psycopg2 parameterized)
-        # Replace :param_name with %s, collect values in order
-        import re
-
-        param_names = re.findall(r':(\w+)', sql_template)
-        sql_clean = sql_template
-
-        # Build ordered values aligned with %s placeholders
-        values = []
-        for name in param_names:
-            sql_clean = sql_clean.replace(f":{name}", "%s", 1)
-            val = params.get(name)
-            # Handle null/None for optional params
-            if val is None or val == "null":
-                values.append(None)
-            elif name == "limit_rows":
-                values.append(int(val))
-            elif name == "branch_id":
-                values.append(int(val) if val else None)
-            else:
-                values.append(str(val))
-
-        # Replace remaining PostgreSQL-style escaped quotes
-        sql_clean = sql_clean.replace("''%''", "'%'")
-        sql_clean = sql_clean.replace("''", "'")
-
         cur.execute(sql_clean, values)
         return [dict(r) for r in cur.fetchall()]
-
     except Exception as e:
         raise Exception(f"Failed to execute template '{template_name}': {str(e)}")
     finally:
         cur.close()
+        p.putconn(conn)
 
 
 def test_connection() -> Dict[str, Any]:
