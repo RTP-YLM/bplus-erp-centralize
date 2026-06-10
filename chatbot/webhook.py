@@ -58,14 +58,31 @@ async def health_check():
     return {"status": "ok", "service": "bplus-erp-chatbot"}
 
 
+@app.get("/debug")
+async def debug_info():
+    """Debug endpoint — connection + template info."""
+    try:
+        from .db_client import test_connection
+        from .settings import DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
+        db = test_connection()
+        return {
+            "db": db,
+            "model": DEEPSEEK_MODEL,
+            "base_url": DEEPSEEK_BASE_URL,
+            "python": __import__("sys").version,
+        }
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
+
+
 @app.get("/templates")
 async def get_templates():
     """List available query templates"""
-    templates = list_templates()
-    return {
-        "templates": templates,
-        "count": len(templates)
-    }
+    try:
+        templates = list_templates()
+        return {"templates": templates, "count": len(templates)}
+    except Exception as e:
+        return {"error": str(e), "type": type(e).__name__}
 
 
 @app.post("/webhook")

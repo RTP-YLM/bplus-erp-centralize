@@ -1,30 +1,32 @@
-# Environment variables
-.env
-.env.local
-.env.production
-
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.egg-info/
-dist/
-build/
-.venv/
-venv/
-
-# IDE
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Railway
-.railway/
-
-# Logs
-*.log
+1|# Environment variables
+2|.env
+3|.env.local
+4|.env.production
+5|
+6|# Python
+7|__pycache__/
+8|*.pyc
+9|*.pyo
+10|*.egg-info/
+11|dist/
+12|build/
+13|.venv/
+14|venv/
+15|
+16|# IDE
+17|.vscode/
+18|.idea/
+19|*.swp
+20|*.swo
+21|
+22|# OS
+23|.DS_Store
+24|Thumbs.db
+25|
+26|# Railway
+27|.railway/
+28|
+29|# Logs
+30|*.log
+31|
+.env.supabase.bak
