@@ -102,9 +102,26 @@ def execute_sql_template(
     Returns:
         List of result rows as dicts
     """
+    return execute_raw_sql(sql_template, params)
+
+
+def execute_raw_sql(
+    sql: str,
+    params: Dict[str, Any]
+) -> List[Dict[str, Any]]:
+    """
+    Execute a raw SQL query with :param → %s parameterized substitution.
+
+    Args:
+        sql: SQL with :param placeholders
+        params: Parameter values
+
+    Returns:
+        List of result rows as dicts
+    """
     pattern, replacer, values = _build_replacer(params)
 
-    sql_clean = pattern.sub(replacer, sql_template)
+    sql_clean = pattern.sub(replacer, sql)
 
     # Clean up PostgreSQL escaped quotes: ''%'' → '%' for ILIKE patterns.
     # Templates store ''%'' || :customer || ''%'' because '' is PostgreSQL's
@@ -125,7 +142,7 @@ def execute_sql_template(
         cur.execute(sql_clean, values)
         return [dict(r) for r in cur.fetchall()]
     except Exception as e:
-        raise Exception(f"Failed to execute template '{template_name}': {str(e)}")
+        raise Exception(f"Failed to execute query: {str(e)}")
     finally:
         cur.close()
         p.putconn(conn)

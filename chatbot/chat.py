@@ -8,7 +8,7 @@ from typing import Dict, List, Any, Tuple, Optional
 from .settings import DEEPSEEK_API_KEY, DEEPSEEK_BASE_URL, DEEPSEEK_MODEL
 from .tools import build_tools
 from .system_prompt import build_system_prompt, inject_context
-from .runner import run_sql_template, format_rows_for_claude
+from .runner import run_sql_template, run_custom_sql, format_rows_for_claude
 
 
 # Initialize OpenAI client pointed at DeepSeek
@@ -23,6 +23,38 @@ def _get_tools() -> List[Dict]:
     if _cached_tools is None:
         _cached_tools = build_tools()
     return _cached_tools
+
+
+def _log_usage(prefix: str, usage) -> None:
+    """Log token usage including cache hit/miss stats."""
+    cache_hit = getattr(usage, 'prompt_cache_hit_tokens', None)
+    cache_miss = getattr(usage, 'prompt_cache_miss_tokens', None)
+
+    parts = [
+        f"[USAGE {prefix}] input={usage.prompt_tokens} output={usage.completion_tokens} total={usage.total_tokens}"
+    ]
+    if cache_hit is not None:
+        parts.append(f"cache_hit={cache_hit} cache_miss={cache_miss}")
+        hit_pct = (cache_hit / usage.prompt_tokens * 100) if usage.prompt_tokens > 0 else 0
+        parts.append(f"hit_rate={hit_pct:.0f}%")
+    print(" ".join(parts))
+
+
+def _run_tool(tc) -> Dict[str, Any]:
+    """Run a single tool call (template or custom query). Returns result dict."""
+    tool_name = tc.function.name
+    try:
+        params = json.loads(tc.function.arguments)
+    except json.JSONDecodeError:
+        return {"success": False, "error": f"{tool_name}: invalid JSON arguments"}
+
+    if tool_name == "query_custom":
+        sql = params.get("sql", "")
+        if not sql:
+            return {"success": False, "error": "query_custom: 'sql' parameter is required"}
+        return run_custom_sql(sql, params)
+    else:
+        return run_sql_template(tool_name, params)
 
 
 def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, List[Dict]]:
@@ -62,7 +94,7 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
         )
         print(f"\n{'='*60}")
         print(f"[REQUEST] model={DEEPSEEK_MODEL} base_url={DEEPSEEK_BASE_URL}")
-        print(f"[REQUEST] tools: {_tools_count} definitions")
+        print(f"[REQUEST] tools: {_tools_count} definitions (15 templates + query_custom)")
         print(f"[REQUEST] messages ({len(messages)} msgs): {_msgs_preview}")
         print(f"{'='*60}\n")
 
@@ -76,8 +108,7 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
         )
 
         msg = response.choices[0].message
-        usage = response.usage
-        print(f"[USAGE] input={usage.prompt_tokens} output={usage.completion_tokens} total={usage.total_tokens}")
+        _log_usage("R1", response.usage)
 
         # If no tool calls, model responded directly (clarification, greeting, etc.)
         if not msg.tool_calls:
@@ -89,6 +120,10 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
         # Run all tool calls and collect results
         all_errors = []
         tool_results = []
+
+        # Log which tool was chosen
+        chosen = [(tc.function.name, str(tc.function.arguments)[:80]) for tc in msg.tool_calls]
+        print(f"[TOOL] DeepSeek chose: {chosen}")
 
         # Add assistant message with tool_calls to history
         messages.append({
@@ -108,20 +143,13 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
         })
 
         for tc in msg.tool_calls:
-            template_name = tc.function.name
-            try:
-                params = json.loads(tc.function.arguments)
-            except json.JSONDecodeError:
-                all_errors.append(f"{template_name}: invalid JSON arguments")
-                continue
-
-            result = run_sql_template(template_name, params)
+            result = _run_tool(tc)
 
             if result["success"]:
                 result_text = format_rows_for_claude(result["rows"], result["row_count"])
             else:
                 result_text = f"❌ Error: {result['error']}"
-                all_errors.append(f"{template_name}: {result['error']}")
+                all_errors.append(f"{tc.function.name}: {result['error']}")
 
             messages.append({
                 "role": "tool",
@@ -147,8 +175,7 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
             max_tokens=4096,
         )
 
-        usage2 = final_response.usage
-        print(f"[USAGE R2] input={usage2.prompt_tokens} output={usage2.completion_tokens} total={usage2.total_tokens}")
+        _log_usage("R2", final_response.usage)
 
         final_text = final_response.choices[0].message.content or ""
 
