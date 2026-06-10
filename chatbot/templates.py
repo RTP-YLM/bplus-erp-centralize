@@ -3,7 +3,7 @@ Query Templates Loader
 Load and cache SQL templates from database
 """
 from typing import Dict, List, Optional
-from .supabase_client import query_templates as fetch_templates_from_supabase
+from .db_client import query_templates as fetch_templates_from_db
 
 # In-memory cache
 _templates_cache: Optional[Dict[str, dict]] = None
@@ -20,7 +20,7 @@ def load_templates() -> Dict[str, dict]:
         return _templates_cache
 
     # Fetch from Supabase REST API (uses HTTPS, works on Railway)
-    rows = fetch_templates_from_supabase()
+    rows = fetch_templates_from_db()
 
     _templates_cache = {
         row['name']: dict(row)

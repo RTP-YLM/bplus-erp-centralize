@@ -10,12 +10,13 @@ def get_conn():
 
 def ensure_table(conn, table_name, columns, pk_columns):
     """Auto-create target table from source column list if it doesn't exist."""
+    pk_lower = [c.lower() for c in pk_columns]          # MSSQL→PG lowercase
     col_defs = ['branch_id SMALLINT NOT NULL']
     for col in columns:
         col_defs.append(f'"{col["name"].lower()}" {col["pg_type"]}')
     col_defs.append('synced_at TIMESTAMPTZ DEFAULT now()')
 
-    pk_str = ', '.join(f'"{c}"' for c in pk_columns)
+    pk_str = ', '.join(f'"{c}"' for c in pk_lower)
 
     with conn.cursor() as cur:
         cur.execute(f"""
@@ -33,6 +34,13 @@ def truncate_branch(conn, table_name, branch_id):
     conn.commit()
 
 
+def drop_table(conn, table_name):
+    """Drop table if it exists (for schema repair on fullload)."""
+    with conn.cursor() as cur:
+        cur.execute(f'DROP TABLE IF EXISTS "{table_name.lower()}"')
+    conn.commit()
+
+
 def upsert(conn, table_name, col_names, rows_with_branch_id, pk_columns):
     """
     rows_with_branch_id: list of tuples where first element is branch_id,
@@ -41,12 +49,13 @@ def upsert(conn, table_name, col_names, rows_with_branch_id, pk_columns):
     if not rows_with_branch_id:
         return 0
 
+    pk_lower = [c.lower() for c in pk_columns]          # MSSQL→PG lowercase
     now = datetime.now(timezone.utc)
     target_cols = ['branch_id'] + [c.lower() for c in col_names] + ['synced_at']
-    update_cols = [c for c in target_cols if c not in pk_columns]
+    update_cols = [c for c in target_cols if c not in pk_lower]
 
     col_list  = ', '.join(f'"{c}"' for c in target_cols)
-    pk_str    = ', '.join(f'"{c}"' for c in pk_columns)
+    pk_str    = ', '.join(f'"{c}"' for c in pk_lower)
     val_str   = ', '.join(['%s'] * len(target_cols))
     upd_str   = ', '.join(f'"{c}" = EXCLUDED."{c}"' for c in update_cols)
 

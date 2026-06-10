@@ -4,7 +4,7 @@ Execute parameterized SQL queries
 """
 from typing import Dict, List, Any, Optional
 from .templates import get_template
-from .supabase_client import execute_sql_template
+from .db_client import execute_sql_template
 
 
 def run_sql_template(template_name: str, params: Dict[str, Any]) -> Dict[str, Any]:

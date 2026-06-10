@@ -52,14 +52,8 @@ def get_date_context(today: date = None) -> Dict[str, str]:
 
 
 def get_branches() -> List[Dict]:
-    from .supabase_client import get_supabase_client
-    supabase = get_supabase_client()
-    response = supabase.table('batch_branch') \
-        .select('id, name, branch_code, enabled') \
-        .eq('enabled', True) \
-        .order('id') \
-        .execute()
-    return response.data
+    from .db_client import get_branches as fetch_branches
+    return fetch_branches()
 
 
 def build_dynamic_context(today: date = None) -> str:

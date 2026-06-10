@@ -7,19 +7,12 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# Supabase REST API (primary - uses HTTPS, works on Railway)
-SUPABASE_URL = os.getenv("SUPABASE_URL")
-SUPABASE_KEY = os.getenv("SUPABASE_KEY")
-
-# PostgreSQL connection (fallback for SQL execution)
+# Railway PostgreSQL (direct connection via psycopg2)
 PG_DSN = os.getenv("PG_DSN")
 
-# Validate Supabase settings
-if not SUPABASE_URL or not SUPABASE_KEY:
-    print("Warning: SUPABASE_URL or SUPABASE_KEY not set")
-    print("Falling back to PG_DSN for all database operations")
-    if not PG_DSN:
-        raise ValueError("Either (SUPABASE_URL + SUPABASE_KEY) or PG_DSN must be configured")
+# Validate
+if not PG_DSN:
+    raise ValueError("PG_DSN environment variable is required")
 
 # Anthropic API
 ANTHROPIC_API_KEY = os.getenv("ANTHROPIC_API_KEY")
