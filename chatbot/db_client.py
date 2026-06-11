@@ -67,8 +67,9 @@ def _build_replacer(params: Dict[str, Any]):
     params: {'customer': 'เม้ง', 'date_from': '2026-01-01', ...}
     """
     # Sort param names longest-first so :date_from is matched before :date
+    # (?<!:) skips PostgreSQL type casts — ::date must NOT match as :date
     sorted_names = sorted(params.keys(), key=len, reverse=True)
-    pattern = re.compile(r':(' + '|'.join(map(re.escape, sorted_names)) + r')\b')
+    pattern = re.compile(r'(?<!:):(' + '|'.join(map(re.escape, sorted_names)) + r')\b')
 
     values = []
     missing_params = set()
@@ -92,11 +93,12 @@ def _build_replacer(params: Dict[str, Any]):
         if sorted_names:
             result = pattern.sub(_repl, result)
         # Second pass: catch any :params that weren't in the dict
-        remaining = set(re.findall(r':(\w+)\b', result))
+        # (?<!:) skips ::type casts here too
+        remaining = set(re.findall(r'(?<!:):(\w+)\b', result))
         if remaining:
             missing_params.update(remaining)
             for name in sorted(remaining, key=len, reverse=True):
-                p = re.compile(r':' + re.escape(name) + r'\b')
+                p = re.compile(r'(?<!:):' + re.escape(name) + r'\b')
                 count = [0]
                 def _repl2(m):
                     count[0] += 1
