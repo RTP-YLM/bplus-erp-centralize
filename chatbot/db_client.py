@@ -41,6 +41,30 @@ def query_templates() -> List[Dict[str, Any]]:
         p.putconn(conn)
 
 
+def fetch_schema_columns() -> List[Dict[str, Any]]:
+    """
+    Fetch all public table columns in deterministic order.
+    Used to build the full-schema prompt section — ordering must be
+    stable so the prompt prefix stays byte-identical (DeepSeek cache).
+    """
+    p = _get_pool()
+    conn = p.getconn()
+    cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+    try:
+        cur.execute(
+            "SELECT c.table_name, c.column_name, c.data_type "
+            "FROM information_schema.columns c "
+            "JOIN information_schema.tables t "
+            "  ON t.table_name = c.table_name AND t.table_schema = c.table_schema "
+            "WHERE c.table_schema = 'public' AND t.table_type = 'BASE TABLE' "
+            "ORDER BY c.table_name, c.ordinal_position"
+        )
+        return [dict(r) for r in cur.fetchall()]
+    finally:
+        cur.close()
+        p.putconn(conn)
+
+
 def get_branches() -> List[Dict[str, Any]]:
     """Fetch enabled branches."""
     p = _get_pool()

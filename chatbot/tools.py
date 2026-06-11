@@ -6,17 +6,15 @@ from typing import List, Dict, Any
 from .templates import load_templates
 
 
-# query_custom tool definition (static — not from DB templates)
+# query_custom tool definition — {tables} is filled from the live DB
+# in build_tools() so the list always matches the whitelist exactly.
 QUERY_CUSTOM_TOOL = {
     "type": "function",
     "function": {
         "name": "query_custom",
         "description": """สร้าง SQL query เองเมื่อไม่มี template ตรงกับคำถาม
-ใช้ได้กับทุกตารางใน ERP schema: docinfo, transtkd, transtkh, skumaster, brand,
-arfile, apfile, skubalance, skumove, ardetail, apdetail, tranpayh, tranpayd,
-arpayment, appayment, bankstatement, bankfile, doctype, batch_branch,
-goods, goodsunit, accountchart, arplu, cashbook, companyinfo, glperiod,
-paymenttype, salesmans, skuap, sldetail, vattable
+ใช้ได้กับทุกตารางใน ERP schema (ดูคอลัมน์เต็มใน system prompt หัวข้อ "📚 Schema เต็มทุกตาราง"):
+{tables}
 
 ⚠️ กฎ:
 - SELECT เท่านั้น
@@ -136,7 +134,24 @@ def build_tools() -> List[Dict[str, Any]]:
         tools.append(tool)
 
     # Add query_custom as the last tool (DeepSeek picks templates first)
-    tools.append(QUERY_CUSTOM_TOOL)
+    # Fill table list from live DB so it matches the whitelist exactly
+    try:
+        from .schema_loader import get_business_tables
+        table_list = ", ".join(get_business_tables())
+    except Exception:
+        from .runner import WHITELIST_TABLES
+        table_list = ", ".join(sorted(WHITELIST_TABLES))
+
+    custom_tool = {
+        "type": "function",
+        "function": {
+            **QUERY_CUSTOM_TOOL["function"],
+            "description": QUERY_CUSTOM_TOOL["function"]["description"].format(
+                tables=table_list
+            ),
+        },
+    }
+    tools.append(custom_tool)
 
     return tools
 

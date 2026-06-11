@@ -17,6 +17,10 @@ client = OpenAI(api_key=DEEPSEEK_API_KEY, base_url=DEEPSEEK_BASE_URL)
 # Cache tools (they don't change between requests)
 _cached_tools: Optional[List[Dict]] = None
 
+# Max rounds of tool calls before forcing a text answer
+# (allows chained queries + self-correcting failed SQL)
+MAX_TOOL_ROUNDS = 3
+
 
 def _get_tools() -> List[Dict]:
     global _cached_tools
@@ -94,90 +98,78 @@ def chat(user_input: str, history: Optional[List[Dict]] = None) -> Tuple[str, Li
         )
         print(f"\n{'='*60}")
         print(f"[REQUEST] model={DEEPSEEK_MODEL} base_url={DEEPSEEK_BASE_URL}")
-        print(f"[REQUEST] tools: {_tools_count} definitions (15 templates + query_custom)")
+        print(f"[REQUEST] tools: {_tools_count} definitions (templates + query_custom)")
         print(f"[REQUEST] messages ({len(messages)} msgs): {_msgs_preview}")
         print(f"{'='*60}\n")
 
-        # Round 1: DeepSeek selects function + extracts params
-        response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=messages,
-            tools=tools,
-            tool_choice="auto",
-            max_tokens=4096,
-        )
+        # Tool loop: model can chain queries or retry a failed SQL.
+        # IMPORTANT: `tools` + tool_choice="auto" in EVERY round — DeepSeek
+        # serializes tool definitions into the prompt prefix; omitting tools
+        # (or tool_choice="none", which drops them too) changes the prefix
+        # and misses the entire cache. Verified: "none" cut hit rate 99%→48%.
+        final_text = ""
+        for round_no in range(1, MAX_TOOL_ROUNDS + 3):
+            over_budget = round_no > MAX_TOOL_ROUNDS
 
-        msg = response.choices[0].message
-        _log_usage("R1", response.usage)
+            response = client.chat.completions.create(
+                model=DEEPSEEK_MODEL,
+                messages=messages,
+                tools=tools,
+                tool_choice="auto",
+                max_tokens=4096,
+            )
 
-        # If no tool calls, model responded directly (clarification, greeting, etc.)
-        if not msg.tool_calls:
-            assistant_text = msg.content or ""
-            history.append({"role": "user", "content": user_input})
-            history.append({"role": "assistant", "content": assistant_text})
-            return assistant_text, history[-10:]
+            msg = response.choices[0].message
+            _log_usage(f"R{round_no}", response.usage)
 
-        # Run all tool calls and collect results
-        all_errors = []
-        tool_results = []
+            # No tool calls → model answered (or was forced to on last round)
+            if not msg.tool_calls:
+                final_text = msg.content or ""
+                break
 
-        # Log which tool was chosen
-        chosen = [(tc.function.name, str(tc.function.arguments)[:80]) for tc in msg.tool_calls]
-        print(f"[TOOL] DeepSeek chose: {chosen}")
-
-        # Add assistant message with tool_calls to history
-        messages.append({
-            "role": "assistant",
-            "content": msg.content,
-            "tool_calls": [
-                {
-                    "id": tc.id,
-                    "type": "function",
-                    "function": {
-                        "name": tc.function.name,
-                        "arguments": tc.function.arguments
-                    }
-                }
-                for tc in msg.tool_calls
-            ]
-        })
-
-        for tc in msg.tool_calls:
-            result = _run_tool(tc)
-
-            if result["success"]:
-                result_text = format_rows_for_claude(result["rows"], result["row_count"])
-            else:
-                result_text = f"❌ Error: {result['error']}"
-                all_errors.append(f"{tc.function.name}: {result['error']}")
+            chosen = [(tc.function.name, str(tc.function.arguments)[:80]) for tc in msg.tool_calls]
+            print(f"[TOOL R{round_no}] DeepSeek chose: {chosen}")
 
             messages.append({
-                "role": "tool",
-                "tool_call_id": tc.id,
-                "content": result_text
+                "role": "assistant",
+                "content": msg.content,
+                "tool_calls": [
+                    {
+                        "id": tc.id,
+                        "type": "function",
+                        "function": {
+                            "name": tc.function.name,
+                            "arguments": tc.function.arguments
+                        }
+                    }
+                    for tc in msg.tool_calls
+                ]
             })
 
-        # If ALL tools failed, return error directly
-        if all_errors and len(all_errors) == len(msg.tool_calls):
-            error_msg = f"❌ เกิดข้อผิดพลาดในการค้นหาข้อมูล: {'; '.join(all_errors)}"
-            history.append({"role": "user", "content": user_input})
-            history.append({"role": "assistant", "content": error_msg})
-            return error_msg, history[-10:]
+            for tc in msg.tool_calls:
+                if over_budget:
+                    # Budget exhausted — refuse execution, ask for a summary
+                    result_text = (
+                        "⚠️ ครบจำนวนรอบ query สูงสุดแล้ว — "
+                        "กรุณาสรุปคำตอบจากข้อมูลที่ได้มาก่อนหน้านี้ "
+                        "ถ้าข้อมูลไม่พอให้บอกผู้ใช้ตามตรง"
+                    )
+                else:
+                    result = _run_tool(tc)
+                    if result["success"]:
+                        result_text = format_rows_for_claude(result["rows"], result["row_count"])
+                    else:
+                        # Feed the error back — model can fix the SQL and retry
+                        result_text = f"❌ Error: {result['error']}"
 
-        # Round 2: DeepSeek summarizes results
-        print(f"\n{'='*60}")
-        print(f"[REQUEST R2] messages: {len(messages)} total")
-        print(f"{'='*60}\n")
+                messages.append({
+                    "role": "tool",
+                    "tool_call_id": tc.id,
+                    "content": result_text
+                })
 
-        final_response = client.chat.completions.create(
-            model=DEEPSEEK_MODEL,
-            messages=messages,
-            max_tokens=4096,
-        )
-
-        _log_usage("R2", final_response.usage)
-
-        final_text = final_response.choices[0].message.content or ""
+        if not final_text:
+            final_text = "❌ ขออภัยครับ ค้นหาข้อมูลไม่สำเร็จในรอบที่กำหนด กรุณาลองถามใหม่อีกครั้ง"
 
         # Return cleaned history (user + assistant only, no tool messages)
         history.append({"role": "user", "content": user_input})

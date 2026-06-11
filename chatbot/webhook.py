@@ -64,11 +64,17 @@ async def debug_info():
     try:
         from .db_client import test_connection
         from .settings import DEEPSEEK_MODEL, DEEPSEEK_BASE_URL
+        from .system_prompt import build_system_prompt
+        from .schema_loader import get_business_tables
         db = test_connection()
+        prompt = build_system_prompt()
         return {
             "db": db,
             "model": DEEPSEEK_MODEL,
             "base_url": DEEPSEEK_BASE_URL,
+            "system_prompt_chars": len(prompt),
+            "system_prompt_est_tokens": len(prompt) // 4,
+            "schema_tables": len(get_business_tables()),
             "python": __import__("sys").version,
         }
     except Exception as e:

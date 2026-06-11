@@ -9,19 +9,29 @@ from .db_client import execute_sql_template, execute_raw_sql
 
 
 # ── Whitelist tables for custom queries ──────────────────────────
+# Static fallback only — primary source is the live DB via schema_loader
+# (every business table is queryable, so coverage matches the schema
+# reference in the system prompt exactly).
 WHITELIST_TABLES = [
-    'docinfo', 'transtkd', 'transtkh', 'transtk',
-    'arfile', 'apfile', 'arpayment', 'appayment',
-    'skumaster', 'skubalance', 'skumove',
-    'goods', 'goodsunit', 'sku', 'skuap', 'arplu',
-    'brand', 'doctype', 'glperiod', 'companyinfo',
-    'accountchart', 'salesman',
-    'bankfile', 'bankstatement', 'paymenttype',
-    'branch', 'batch_branch', 'ardetail', 'apdetail',
-    'tranpayh', 'tranpayd', 'tranpaya',
-    'accountvoucher', 'accountjournal', 'vattable',
-    'cashbook', 'sldetail',
+    'accountchart', 'accountjournal', 'accountvoucher',
+    'apdetail', 'apfile', 'appayment',
+    'ardetail', 'arfile', 'arpayment', 'arplu',
+    'bankfile', 'bankstatement', 'batch_branch', 'branch', 'brand',
+    'cashbook', 'companyinfo', 'docinfo', 'doctype',
+    'glperiod', 'goodsmaster', 'paymenttype', 'salesman',
+    'skuap', 'skubalance', 'skumaster', 'skumove', 'sldetail',
+    'tranpaya', 'tranpayd', 'tranpayh', 'transtkd', 'transtkh',
+    'vattable',
 ]
+
+
+def get_whitelist_tables() -> List[str]:
+    """Queryable tables — from live DB schema, falling back to static list."""
+    try:
+        from .schema_loader import get_business_tables
+        return get_business_tables()
+    except Exception:
+        return WHITELIST_TABLES
 
 BANNED_KEYWORDS = [
     'DROP', 'DELETE', 'INSERT', 'UPDATE', 'ALTER', 'CREATE',
@@ -60,7 +70,7 @@ def validate_custom_sql(sql: str) -> str:
         re.IGNORECASE
     )
     referenced = table_pattern.findall(sql_stripped)
-    whitelist_lower = [t.lower() for t in WHITELIST_TABLES]
+    whitelist_lower = [t.lower() for t in get_whitelist_tables()]
 
     # CTE names (WITH clause) — skip them
     cte_names = set()

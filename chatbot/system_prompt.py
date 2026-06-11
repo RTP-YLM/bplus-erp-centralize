@@ -184,9 +184,7 @@ CORE_SCHEMA = """
 
 ⚠️ **ทุกตารางมี column `branch_id`** — ต้อง JOIN หรือ WHERE ด้วย branch_id เสมอ!
 
-### ตารางอื่นที่ใช้ได้ (เพิ่มเติมจากข้างบน)
-accountchart, appayment, arplu, cashbook, companyinfo, glperiod, 
-paymenttype, salesmans, skuap, sldetail, vattable
+ตารางข้างบนคือตารางหลักพร้อมคำอธิบาย — **schema เต็มทุกตารางทุกคอลัมน์อยู่ในหัวข้อ "📚 Schema เต็มทุกตาราง" ด้านล่าง** ใช้อ้างอิงชื่อคอลัมน์จริงเมื่อเขียน query_custom
 """
 
 COLUMN_GLOSSARY = """
@@ -229,11 +227,15 @@ BUSINESS_RULES = """
 
 # ═══════════════════════════════════════════════════════════════
 # STATIC SYSTEM PROMPT — loaded once, same for every request
+# Split into HEAD + TAIL so the full auto-generated schema can be
+# spliced in between (see build_system_prompt).
 # ═══════════════════════════════════════════════════════════════
-STATIC_SYSTEM_PROMPT = """คุณคือผู้ช่วยสืบค้นข้อมูล ERP ของ เม้งยานยนต์ (ธุรกิจขายอะไหล่มอเตอร์ไซค์ 7 สาขา)
+PROMPT_HEAD = """คุณคือผู้ช่วยสืบค้นข้อมูล ERP ของ เม้งยานยนต์ (ธุรกิจขายอะไหล่มอเตอร์ไซค์ 7 สาขา)
 ตอบเป็นภาษาไทย กระชับ ตรงประเด็น เป็นมิตร
 
-""" + CORE_SCHEMA + COLUMN_GLOSSARY + BUSINESS_RULES + """
+""" + CORE_SCHEMA
+
+PROMPT_TAIL = COLUMN_GLOSSARY + BUSINESS_RULES + """
 ## 🛠️ เครื่องมือที่ใช้ได้
 
 ### 1. Pre-built Templates (15 รายงาน)
@@ -340,6 +342,9 @@ LIMIT 20
 - ห้ามใช้ parameter ที่ไม่มีใน SQL (check query_custom parameters schema)
 """
 
+# Backwards-compatible alias (curated prompt without generated schema)
+STATIC_SYSTEM_PROMPT = PROMPT_HEAD + PROMPT_TAIL
+
 
 # ═══════════════════════════════════════════════════════════════
 # DYNAMIC CONTEXT — injected per request (NOT cached)
@@ -431,7 +436,24 @@ def inject_context(user_message: str, today: date = None) -> str:
     return f"{ctx}\n\n{user_message}"
 
 
-# Backwards-compatible
+# Cached full prompt — built once per process so the prefix sent to
+# DeepSeek stays byte-identical (maximizes prompt cache hits)
+_full_prompt_cache: str = None
+
+
 def build_system_prompt(today: date = None) -> str:
-    """Returns STATIC prompt only — dynamic context goes into user message."""
-    return STATIC_SYSTEM_PROMPT
+    """
+    Returns STATIC prompt (curated guide + full auto-generated schema).
+    Dynamic context (dates, branches) goes into the user message instead —
+    keeping this prefix stable for DeepSeek context caching.
+    """
+    global _full_prompt_cache
+    if _full_prompt_cache is None:
+        try:
+            from .schema_loader import build_schema_reference
+            schema_ref = build_schema_reference()
+        except Exception as e:
+            print(f"[WARN] Full schema unavailable, using curated only: {e}")
+            return PROMPT_HEAD + PROMPT_TAIL
+        _full_prompt_cache = PROMPT_HEAD + "\n" + schema_ref + "\n" + PROMPT_TAIL
+    return _full_prompt_cache
